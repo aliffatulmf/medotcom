@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aliffatulmf/medotcom/util"
 )
@@ -105,7 +106,7 @@ func parseLineArray(s []string) (*Cookie, error) {
 		return nil, fmt.Errorf("error parsing secure: %w", err)
 	}
 
-	expire, err := strconv.ParseFloat(s[4], 64)
+	itime, err := strconv.ParseInt(s[4], 0, 64)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing expiration date: %w", err)
 	}
@@ -115,7 +116,7 @@ func parseLineArray(s []string) (*Cookie, error) {
 		HostOnly:       hostOnly,
 		Path:           s[2],
 		Secure:         secure,
-		ExpirationDate: expire,
+		ExpirationDate: time.Unix(itime, 64),
 		Name:           s[5],
 		Value:          s[6],
 	}, nil

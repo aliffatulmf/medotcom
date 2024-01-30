@@ -1,6 +1,7 @@
 package requests
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 
@@ -14,7 +15,12 @@ func NewRequest(method, url string, body io.Reader, cookies []parser.Cookie) (*h
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36 Edg/118.0.0.0")
 
 	for _, c := range cookies {
-		req.AddCookie(c.Cookie())
+		cookie := c.Cookie()
+		if err = cookie.Valid(); err != nil {
+			return nil, fmt.Errorf("cookie not valid: %s", err)
+		}
+
+		req.Header.Add("Cookie", cookie.String())
 	}
 
 	return req, err
