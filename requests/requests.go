@@ -10,9 +10,40 @@ import (
 	"github.com/aliffatulmf/medotcom/parser"
 )
 
+type Chat struct {
+	ID         string `json:"_id"`
+	ChatID     string `json:"chat_id"`
+	Title      string `json:"title"`
+	DateUpdate string `json:"date_updated"`
+}
+
+type ChatResponse struct {
+	Chats []Chat `json:"chats"`
+}
+
 type RequestOptions struct {
 	Payload io.Reader
 	Cookies []parser.Cookie
+}
+
+func NewRequest(method, url string, body io.Reader, cookies []parser.Cookie) (*http.Request, error) {
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, fmt.Errorf("NewRequest: %s", err)
+	}
+
+	req.Header.Set("Host", "you.com")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36 Edg/118.0.0.0")
+
+	for _, c := range cookies {
+		if err = c.HttpCookie().Valid(); err != nil {
+			return nil, fmt.Errorf("cookie not valid: %s", err)
+		}
+		req.Header.Add("Cookie", c.HttpCookie().String())
+	}
+
+	return req, err
 }
 
 func RequestGET(opt *RequestOptions) (*ChatResponse, error) {
@@ -38,12 +69,12 @@ func RequestGET(opt *RequestOptions) (*ChatResponse, error) {
 		return nil, fmt.Errorf("unable to read response body: %w", err)
 	}
 
-	var chatResponse ChatResponse
-	if err = json.Unmarshal(data, &chatResponse); err != nil {
+	var response ChatResponse
+	if err = json.Unmarshal(data, &response); err != nil {
 		return nil, fmt.Errorf("unable to unmarshal response: %w", err)
 	}
 
-	return &chatResponse, nil
+	return &response, nil
 }
 
 func RequestDELETE(opt *RequestOptions) error {

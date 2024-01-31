@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/aliffatulmf/medotcom/parser"
 	"github.com/aliffatulmf/medotcom/requests"
@@ -16,34 +17,35 @@ const (
 )
 
 var (
-	cookieFile   string
-	actionMethod string
+	cookieFile string
+	action     string
 )
 
 func init() {
-	parser := flag.NewFlagSet("You Connect", flag.ExitOnError)
-	parser.StringVar(&cookieFile, "cookie", "", "Path to the cookie file. This file should contain the cookies required for authentication.")
-	parser.StringVar(&actionMethod, "action", GET, "Action to perform. Can be either 'GET' or 'DELETE'.")
-	if err := parser.Parse(os.Args[1:]); err != nil {
+	flagSet := flag.NewFlagSet("You Connect", flag.ExitOnError)
+	flagSet.StringVar(&cookieFile, "cookie", "", "Path to the cookie file. This file should contain the cookies required for authentication.")
+	flagSet.StringVar(&action, "action", GET, "Action to perform. Can be either 'GET' or 'DELETE'.")
+	if err := flagSet.Parse(os.Args[1:]); err != nil {
 		fmt.Printf("Error parsing flags: %s\n", err)
 		os.Exit(1)
 	}
 }
 
 func main() {
-	cookies, err := parser.NewParser(cookieFile)
+	cookie := parser.NewParser(cookieFile)
+	parsed, err := cookie.Parse()
 	if err != nil {
-		fmt.Println(err)
+		fmt.Printf("Failed to parse cookie file: %s\n", err)
 		os.Exit(1)
 	}
 
-	res := getChat(cookies)
+	res := getChat(parsed)
 
-	switch strings.ToUpper(actionMethod) {
+	switch strings.ToUpper(action) {
 	case GET:
 		showChatTitle(res)
 	case DELETE:
-		deleteAllChat(res, cookies)
+		deleteAllChat(res, parsed)
 	default:
 		fmt.Println("Invalid action method.")
 		os.Exit(1)
@@ -76,20 +78,14 @@ func showChatTitle(cr *requests.ChatResponse) {
 }
 
 func deleteAllChat(cr *requests.ChatResponse, cookies []parser.Cookie) {
-	n := 5
-	if len(cr.Chats) < 5 {
-		n = len(cr.Chats)
-	}
-
-	lim := make(chan struct{}, n)
+	var wg sync.WaitGroup
+	wg.Add(len(cr.Chats))
 
 	for _, chat := range cr.Chats {
-		lim <- struct{}{}
-
 		go func(chat requests.Chat) {
 			body := fmt.Sprintf(`{"chatId": "%s"}`, chat.ChatID)
-
 			err := requests.RequestDELETE(&requests.RequestOptions{
+				// Payload: strings.NewReader(`{"chatId": "chat.ChatID"}`),
 				Payload: strings.NewReader(body),
 				Cookies: cookies,
 			})
@@ -100,7 +96,9 @@ func deleteAllChat(cr *requests.ChatResponse, cookies []parser.Cookie) {
 				fmt.Println("Failed to delete chat with title:", chat.Title)
 			}
 
-			<-lim
+			wg.Done()
 		}(chat)
 	}
+
+	wg.Wait()
 }

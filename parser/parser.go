@@ -4,13 +4,11 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
-
-	"github.com/aliffatulmf/medotcom/util"
 )
 
 const (
@@ -19,73 +17,104 @@ const (
 )
 
 type FileParser struct {
-	File string
+	path string
 }
 
-func NewParser(f string) ([]Cookie, error) {
-	if err := util.IsFileCorrect(f); err != nil {
-		return nil, fmt.Errorf("error checking file: %w", err)
+func NewParser(f string) *FileParser {
+	return &FileParser{path: f}
+}
+
+func (f *FileParser) Validate() error {
+	if f.path == "" {
+		return fmt.Errorf("file path cannot be empty")
 	}
 
-	fp := FileParser{File: f}
+	if strings.Contains(f.path, "..") {
+		return fmt.Errorf("path traversal detected")
+	}
 
-	switch fp.Ext() {
+	if _, err := os.Stat(f.path); err != nil {
+		return fmt.Errorf("file %s not found: %w", f.path, err)
+	}
+
+	return nil
+}
+
+func (f *FileParser) Parse() ([]Cookie, error) {
+	if err := f.Validate(); err != nil {
+		return nil, err
+	}
+
+	switch filepath.Ext(f.path) {
 	case JSON:
-		return fp.Json()
+		return f.Json()
 	case TEXT:
-		return fp.Text()
+		return f.Text()
 	default:
-		return nil, fmt.Errorf("unsupported file extension for file %s", f)
+		return nil, fmt.Errorf("unsupported file extension")
 	}
 }
 
-func (f *FileParser) Ext() string {
-	return filepath.Ext(f.File)
+func (f *FileParser) readFile() (io.ReadCloser, error) {
+	fopen, err := os.Open(f.path)
+	if err != nil {
+		return nil, err
+	}
+
+	stat, err := fopen.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	if stat.Size() == 0 || stat.Size() > 15e3 { // 15kb
+		return nil, fmt.Errorf("file size is too large or empty")
+	}
+
+	return fopen, nil
 }
 
 func (f *FileParser) Json() ([]Cookie, error) {
-	var cookies []Cookie
-
-	byteFile, err := os.ReadFile(f.File)
+	fopen, err := f.readFile()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read file %s: %w", f.File, err)
+		return nil, fmt.Errorf("readFile: %s", err)
 	}
+	defer fopen.Close()
 
-	if err = json.Unmarshal(byteFile, &cookies); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal JSON from file %s: %w", f.File, err)
+	var cookies []Cookie
+	if err := json.NewDecoder(fopen).Decode(&cookies); err != nil {
+		return nil, fmt.Errorf("failed to decode json: %w", err)
 	}
 
 	return cookies, nil
 }
 
 func (f *FileParser) Text() ([]Cookie, error) {
-	file, err := os.Open(f.File)
+	fopen, err := f.readFile()
 	if err != nil {
-		return nil, fmt.Errorf("failed to open file %s: %w", f.File, err)
+		return nil, fmt.Errorf("fileOpen: %s", err)
 	}
-	defer file.Close()
+	defer fopen.Close()
+
+	scanner := bufio.NewScanner(fopen)
 
 	var cookies []Cookie
-	scanner := bufio.NewScanner(file)
-
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		// skip if line is empty or starts with '#'
 		if line == "" || line[0] == '#' {
 			continue
 		}
 
 		cookie, err := parseLineArray(strings.Fields(line))
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse line in file %s: %w", f.File, err)
+			return nil, fmt.Errorf("failed to parse line in file %s: %w", f.path, err)
 		}
 
 		cookies = append(cookies, *cookie)
 	}
 
 	if err = scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error occurred while scanning file %s: %w", f.File, err)
+		return nil, fmt.Errorf("error occurred while scanning file %s: %w", f.path, err)
 	}
 
 	return cookies, nil
@@ -106,18 +135,12 @@ func parseLineArray(s []string) (*Cookie, error) {
 		return nil, fmt.Errorf("error parsing secure: %w", err)
 	}
 
-	itime, err := strconv.ParseInt(s[4], 0, 64)
-	if err != nil {
-		return nil, fmt.Errorf("error parsing expiration date: %w", err)
-	}
-
 	return &Cookie{
-		Domain:         s[0],
-		HostOnly:       hostOnly,
-		Path:           s[2],
-		Secure:         secure,
-		ExpirationDate: time.Unix(itime, 64),
-		Name:           s[5],
-		Value:          s[6],
+		Domain:   s[0],
+		HostOnly: hostOnly,
+		Path:     s[2],
+		Secure:   secure,
+		Name:     s[5],
+		Value:    s[6],
 	}, nil
 }
