@@ -4,48 +4,45 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 )
 
-const (
-	TEXT = ".txt"
-	JSON = ".json"
-)
-
 type FileParser struct {
-	path string
+	Path string
 }
 
-func NewParser(f string) *FileParser {
-	return &FileParser{path: f}
-}
+func NewParser(cookie string) (*FileParser, error) {
+	cookie = strings.TrimSpace(cookie)
 
-func (f *FileParser) Validate() error {
-	if f.path == "" {
-		return fmt.Errorf("file path cannot be empty")
+	if cookie == "" {
+		return nil, fmt.Errorf("NewParser: cookie file path cannot be empty")
 	}
 
-	if strings.Contains(f.path, "..") {
-		return fmt.Errorf("path traversal detected")
+	stat, err := os.Lstat(cookie)
+	if err != nil {
+		return nil, fmt.Errorf("NewParser: %w", err)
 	}
 
-	if _, err := os.Stat(f.path); err != nil {
-		return fmt.Errorf("file %s not found: %w", f.path, err)
+	if stat.IsDir() {
+		return nil, fmt.Errorf("NewParser: cookie file path is a directory")
 	}
 
-	return nil
+	if stat.Size() == 0 {
+		return nil, fmt.Errorf("NewParser: cookie file is empty")
+	}
+
+	if !strings.HasSuffix(cookie, TEXT) && !strings.HasSuffix(cookie, JSON) {
+		return nil, fmt.Errorf("NewParser: unsupported file extension")
+	}
+
+	return &FileParser{Path: cookie}, nil
 }
 
 func (f *FileParser) Parse() ([]Cookie, error) {
-	if err := f.Validate(); err != nil {
-		return nil, err
-	}
-
-	switch filepath.Ext(f.path) {
+	switch filepath.Ext(f.Path) {
 	case JSON:
 		return f.Json()
 	case TEXT:
@@ -55,30 +52,17 @@ func (f *FileParser) Parse() ([]Cookie, error) {
 	}
 }
 
-func (f *FileParser) readFile() (io.ReadCloser, error) {
-	fopen, err := os.Open(f.path)
-	if err != nil {
-		return nil, err
-	}
-
-	stat, err := fopen.Stat()
-	if err != nil {
-		return nil, err
-	}
-
-	if stat.Size() == 0 || stat.Size() > 15e3 { // 15kb
-		return nil, fmt.Errorf("file size is too large or empty")
-	}
-
-	return fopen, nil
-}
-
 func (f *FileParser) Json() ([]Cookie, error) {
-	fopen, err := f.readFile()
+	fopen, err := os.Open(f.Path)
 	if err != nil {
-		return nil, fmt.Errorf("readFile: %s", err)
+		return nil, err
 	}
 	defer fopen.Close()
+
+	if err = CheckFileSize(fopen, 15*1024); err != nil {
+		return nil, fmt.Errorf("file size limit: %w", err)
+
+	}
 
 	var cookies []Cookie
 	if err := json.NewDecoder(fopen).Decode(&cookies); err != nil {
@@ -89,11 +73,15 @@ func (f *FileParser) Json() ([]Cookie, error) {
 }
 
 func (f *FileParser) Text() ([]Cookie, error) {
-	fopen, err := f.readFile()
+	fopen, err := os.Open(f.Path)
 	if err != nil {
-		return nil, fmt.Errorf("fileOpen: %s", err)
+		return nil, err
 	}
 	defer fopen.Close()
+
+	if err = CheckFileSize(fopen, 15*1024); err != nil {
+		return nil, fmt.Errorf("file size limit: %w", err)
+	}
 
 	scanner := bufio.NewScanner(fopen)
 
@@ -107,14 +95,14 @@ func (f *FileParser) Text() ([]Cookie, error) {
 
 		cookie, err := parseLineArray(strings.Fields(line))
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse line in file %s: %w", f.path, err)
+			return nil, err
 		}
 
 		cookies = append(cookies, *cookie)
 	}
 
 	if err = scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error occurred while scanning file %s: %w", f.path, err)
+		return nil, fmt.Errorf("error occurred while scanning file %s: %w", f.Path, err)
 	}
 
 	return cookies, nil
